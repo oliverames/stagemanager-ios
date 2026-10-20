@@ -129,7 +129,9 @@
     void (^updateSceneSettings)(id) = ^void(UIMutableApplicationSceneSettings *settings) {
         settings.canShowAlerts = YES;
         settings.cornerRadiusConfiguration = [[PrivClass(BSCornerRadiusConfiguration) alloc] initWithTopLeft:self.view.layer.cornerRadius bottomLeft:self.view.layer.cornerRadius bottomRight:self.view.layer.cornerRadius topRight:self.view.layer.cornerRadius];
-        settings.displayConfiguration = ExternalDisplayCoordinator.shared.targetScreen.displayConfiguration;
+        UIScreen *screen = ExternalDisplayCoordinator.shared.externalScreen;
+        if(!screen) screen = UIScreen.mainScreen;
+        settings.displayConfiguration = screen.displayConfiguration;
         settings.foreground = YES;
         //settings.interruptionPolicy = 2; // reconnect
         settings.level = 1;

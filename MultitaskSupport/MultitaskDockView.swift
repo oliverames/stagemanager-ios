@@ -24,9 +24,9 @@ import Combine
     private var externalWindow: UIWindow?
     private var registration: AnyObject?
 
-    /// The screen that virtual windows render on. Falls back to the phone screen.
-    @objc var targetScreen: UIScreen {
-        externalScene?.screen ?? UIScreen.main
+    /// The external display's screen, or nil while no external display is connected.
+    @objc var externalScreen: UIScreen? {
+        externalScene?.screen
     }
 
     @objc func register(on viewController: UIViewController) {
