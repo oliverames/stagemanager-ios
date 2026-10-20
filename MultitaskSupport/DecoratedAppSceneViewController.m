@@ -114,11 +114,22 @@
     // Navigation bar
     UINavigationBar *navigationBar = [[UINavigationBar alloc] initWithFrame:CGRectMake(0, 0, self.view.frame.size.width, navBarHeight)];
     navigationBar.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    // Transparent, so the glass body behind the bar shows through.
+    UINavigationBarAppearance *barAppearance = [[UINavigationBarAppearance alloc] init];
+    [barAppearance configureWithTransparentBackground];
+    navigationBar.standardAppearance = barAppearance;
+    navigationBar.scrollEdgeAppearance = barAppearance;
     UINavigationItem *navigationItem = [[UINavigationItem alloc] initWithTitle:self.title];
     navigationBar.items = @[navigationItem];
-    
+
     self.view.axis = UILayoutConstraintAxisVertical;
-    self.view.backgroundColor = UIColor.systemBackgroundColor;
+    // Liquid Glass body. It sits behind the arranged views and does not take touches.
+    UIVisualEffectView *glassBody = [[UIVisualEffectView alloc] initWithEffect:[[UIGlassEffect alloc] init]];
+    glassBody.frame = self.view.bounds;
+    glassBody.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    glassBody.userInteractionEnabled = NO;
+    [self.view insertSubview:glassBody atIndex:0];
+    self.view.backgroundColor = UIColor.clearColor;
     self.view.layer.cornerRadius = 10;
     self.view.layer.masksToBounds = YES;
 
