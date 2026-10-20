@@ -10,6 +10,71 @@ import SwiftUI
 import UIKit
 import Combine
 
+// MARK: - External display
+
+/// Moves the virtual-window host onto an external display when one connects.
+///
+/// iOS 27 presents the external scene only after the app registers a scene accessory,
+/// so the accessory is registered from the main window's root view controller.
+@available(iOS 16.0, *)
+@objc final class ExternalDisplayCoordinator: NSObject {
+    @objc static let shared = ExternalDisplayCoordinator()
+
+    private(set) weak var externalScene: UIWindowScene?
+    private var externalWindow: UIWindow?
+    private var registration: AnyObject?
+
+    /// The screen that virtual windows render on. Falls back to the phone screen.
+    @objc var targetScreen: UIScreen {
+        externalScene?.screen ?? UIScreen.main
+    }
+
+    @objc func register(on viewController: UIViewController) {
+        guard #available(iOS 27.0, *), registration == nil else { return }
+        let configuration = UISceneConfiguration(name: "External Display", sessionRole: .windowExternalDisplayNonInteractive)
+        configuration.delegateClass = ExternalDisplaySceneDelegate.self
+        let accessory = UISceneAccessory.externalNonInteractive(sceneConfiguration: configuration)
+        registration = viewController.registerSceneAccessory(accessory)
+    }
+
+    func attach(scene: UIWindowScene) {
+        externalScene = scene
+        let root = UIViewController()
+        root.view.backgroundColor = .black
+        let window = UIWindow(windowScene: scene)
+        window.rootViewController = root
+        window.isHidden = false
+        externalWindow = window
+        MultitaskDockManager.shared.moveWindowHosting(to: root.view)
+    }
+
+    func detach() {
+        externalWindow?.isHidden = true
+        externalWindow = nil
+        externalScene = nil
+        if let mainRoot = (UIApplication.shared.connectedScenes.first as? UIWindowScene)?.keyWindow?.rootViewController {
+            MultitaskDockManager.shared.moveWindowHosting(to: mainRoot.view.subviews.first ?? mainRoot.view)
+        }
+    }
+}
+
+/// Owns the external display window. The display is non-interactive, so input still comes from the phone.
+@available(iOS 16.0, *)
+final class ExternalDisplaySceneDelegate: UIResponder, UIWindowSceneDelegate {
+    func scene(
+        _ scene: UIScene,
+        willConnectTo session: UISceneSession,
+        options connectionOptions: UIScene.ConnectionOptions
+    ) {
+        guard let windowScene = scene as? UIWindowScene else { return }
+        ExternalDisplayCoordinator.shared.attach(scene: windowScene)
+    }
+
+    func sceneDidDisconnect(_ scene: UIScene) {
+        ExternalDisplayCoordinator.shared.detach()
+    }
+}
+
 // MARK: - App Info Provider
 class AppInfoProvider {
     
@@ -273,6 +338,14 @@ class AppInfoProvider {
         (UIApplication.shared.connectedScenes.first as? UIWindowScene)?.windows.first
     }
 
+    /// Moves the virtual-window host into `container` and fills it.
+    func moveWindowHosting(to container: UIView) {
+        windowHostingView.removeFromSuperview()
+        windowHostingView.frame = container.bounds
+        windowHostingView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        container.addSubview(windowHostingView)
+    }
+
     public var safeAreaInsets: UIEdgeInsets {
         if #available(iOS 11.0, *) {
             return keyWindow?.safeAreaInsets ?? .zero
@@ -287,6 +360,7 @@ class AppInfoProvider {
     override init() {
         super.init()
         keyWindow!.rootViewController!.view.subviews.first!.addSubview(self.windowHostingView)
+        ExternalDisplayCoordinator.shared.register(on: keyWindow!.rootViewController!)
         setupDockView()
         NotificationCenter.default.addObserver(
             self,
