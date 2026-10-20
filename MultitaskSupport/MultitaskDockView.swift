@@ -16,13 +16,13 @@ import Combine
 ///
 /// iOS 27 presents the external scene only after the app registers a scene accessory,
 /// so the accessory is registered from the main window's root view controller.
-@available(iOS 16.0, *)
 @objc final class ExternalDisplayCoordinator: NSObject {
     @objc static let shared = ExternalDisplayCoordinator()
 
     private(set) weak var externalScene: UIWindowScene?
     private var externalWindow: UIWindow?
     private var registration: AnyObject?
+    private var trackpad: ExternalTrackpad?
 
     /// The external display's screen, or nil while no external display is connected.
     @objc var externalScreen: UIScreen? {
@@ -30,7 +30,7 @@ import Combine
     }
 
     @objc func register(on viewController: UIViewController) {
-        guard #available(iOS 27.0, *), registration == nil else { return }
+        guard registration == nil else { return }
         let configuration = UISceneConfiguration(name: "External Display", sessionRole: .windowExternalDisplayNonInteractive)
         configuration.delegateClass = ExternalDisplaySceneDelegate.self
         let accessory = UISceneAccessory.externalNonInteractive(sceneConfiguration: configuration)
@@ -46,9 +46,19 @@ import Combine
         window.isHidden = false
         externalWindow = window
         MultitaskDockManager.shared.moveWindowHosting(to: root.view)
+
+        // The phone scene is the one that is not the external scene. connectedScenes.first is not reliable here.
+        let phoneScene = UIApplication.shared.connectedScenes.first { $0 is UIWindowScene && $0 !== scene } as? UIWindowScene
+        if let phoneWindow = phoneScene?.windows.first {
+            let trackpad = ExternalTrackpad()
+            trackpad.start(phoneWindow: phoneWindow, externalRoot: root.view, hostingView: MultitaskDockManager.shared.windowHostingView)
+            self.trackpad = trackpad
+        }
     }
 
     func detach() {
+        trackpad?.stop()
+        trackpad = nil
         externalWindow?.isHidden = true
         externalWindow = nil
         externalScene = nil
@@ -59,7 +69,6 @@ import Combine
 }
 
 /// Owns the external display window. The display is non-interactive, so input still comes from the phone.
-@available(iOS 16.0, *)
 final class ExternalDisplaySceneDelegate: UIResponder, UIWindowSceneDelegate {
     func scene(
         _ scene: UIScene,
@@ -72,6 +81,177 @@ final class ExternalDisplaySceneDelegate: UIResponder, UIWindowSceneDelegate {
 
     func sceneDidDisconnect(_ scene: UIScene) {
         ExternalDisplayCoordinator.shared.detach()
+    }
+}
+
+/// Turns the phone screen into a trackpad for the external display.
+///
+/// While an external display is connected, the phone shows a transparent overlay. A one-finger
+/// drag moves a cursor on the external display. A press starts a window drag when the cursor is
+/// in a window's title area, and every press raises the window under the cursor. Presses on
+/// guest content are not forwarded yet, because routing touches into remote scenes needs
+/// private API work that is not built.
+final class ExternalTrackpad: NSObject, UIGestureRecognizerDelegate {
+    private static let sensitivity: CGFloat = 1.2
+    private static let titleHeight: CGFloat = 44
+
+    private weak var overlay: UIView?
+    private weak var exitButton: UIButton?
+    private weak var externalRoot: UIView?
+    private weak var hostingView: UIView?
+    private weak var draggedWindow: UIView?
+    private let cursor = ExternalCursorView()
+    private var cursorPosition = CGPoint.zero
+
+    /// Shows the overlay on the phone window and the cursor on the external display.
+    func start(phoneWindow: UIWindow, externalRoot: UIView, hostingView: UIView) {
+        stop()
+        self.externalRoot = externalRoot
+        self.hostingView = hostingView
+        cursorPosition = CGPoint(x: externalRoot.bounds.midX, y: externalRoot.bounds.midY)
+        cursor.frame.origin = cursorPosition
+        externalRoot.addSubview(cursor)
+
+        let overlay = UIView(frame: phoneWindow.bounds)
+        overlay.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+
+        let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
+        pan.maximumNumberOfTouches = 1
+        pan.delegate = self
+        overlay.addGestureRecognizer(pan)
+
+        let press = UILongPressGestureRecognizer(target: self, action: #selector(handlePress(_:)))
+        press.minimumPressDuration = 0
+        press.allowableMovement = .greatestFiniteMagnitude
+        press.delegate = self
+        overlay.addGestureRecognizer(press)
+
+        var configuration = UIButton.Configuration.glass()
+        configuration.title = "Exit trackpad"
+        let exit = UIButton(configuration: configuration, primaryAction: UIAction { [weak self] _ in
+            self?.stop()
+        })
+        exit.translatesAutoresizingMaskIntoConstraints = false
+        overlay.addSubview(exit)
+        NSLayoutConstraint.activate([
+            exit.trailingAnchor.constraint(equalTo: overlay.safeAreaLayoutGuide.trailingAnchor, constant: -16),
+            exit.topAnchor.constraint(equalTo: overlay.safeAreaLayoutGuide.topAnchor, constant: 8)
+        ])
+
+        phoneWindow.addSubview(overlay)
+        self.overlay = overlay
+        self.exitButton = exit
+    }
+
+    func stop() {
+        overlay?.removeFromSuperview()
+        cursor.removeFromSuperview()
+        overlay = nil
+        exitButton = nil
+        draggedWindow = nil
+    }
+
+    // Presses on the exit button belong to the button.
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        guard let exitButton, let view = touch.view else { return true }
+        return !view.isDescendant(of: exitButton)
+    }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+        true
+    }
+
+    @objc private func handlePan(_ recognizer: UIPanGestureRecognizer) {
+        guard let overlay, let root = externalRoot, overlay.bounds.width > 0, overlay.bounds.height > 0 else { return }
+        switch recognizer.state {
+        case .changed, .ended:
+            let translation = recognizer.translation(in: overlay)
+            recognizer.setTranslation(.zero, in: overlay)
+            let scaleX = root.bounds.width / overlay.bounds.width * Self.sensitivity
+            let scaleY = root.bounds.height / overlay.bounds.height * Self.sensitivity
+            moveCursor(by: CGPoint(x: translation.x * scaleX, y: translation.y * scaleY), in: root)
+        default:
+            break
+        }
+    }
+
+    @objc private func handlePress(_ recognizer: UILongPressGestureRecognizer) {
+        switch recognizer.state {
+        case .began:
+            guard let window = windowRoot(at: cursorPosition) else {
+                draggedWindow = nil
+                return
+            }
+            let distanceFromTop = cursorPosition.y - window.frame.minY
+            draggedWindow = distanceFromTop <= Self.titleHeight ? window : nil
+        case .ended, .cancelled, .failed:
+            draggedWindow = nil
+        default:
+            break
+        }
+    }
+
+    private func moveCursor(by delta: CGPoint, in root: UIView) {
+        let bounds = root.bounds
+        cursorPosition = CGPoint(
+            x: min(max(cursorPosition.x + delta.x, bounds.minX), bounds.maxX),
+            y: min(max(cursorPosition.y + delta.y, bounds.minY), bounds.maxY)
+        )
+        cursor.frame.origin = cursorPosition
+        if let window = draggedWindow {
+            window.center = CGPoint(x: window.center.x + delta.x, y: window.center.y + delta.y)
+        }
+    }
+
+    /// The guest window under `point`, raised to the front. Returns nil over the desktop.
+    private func windowRoot(at point: CGPoint) -> UIView? {
+        guard let root = externalRoot, let hostingView else { return nil }
+        var view = root.hitTest(point, with: nil)
+        while let current = view, current.superview !== hostingView {
+            view = current.superview
+        }
+        guard let window = view else { return nil }
+        hostingView.bringSubviewToFront(window)
+        return window
+    }
+}
+
+/// Arrow pointer for the external display. Drawn with a shape layer so it stays sharp at any size.
+final class ExternalCursorView: UIView {
+    private let arrow = CAShapeLayer()
+
+    init() {
+        super.init(frame: CGRect(x: 0, y: 0, width: 22, height: 30))
+        isUserInteractionEnabled = false
+        arrow.fillColor = UIColor.white.cgColor
+        arrow.strokeColor = UIColor.black.cgColor
+        arrow.lineWidth = 1.2
+        layer.addSublayer(arrow)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("ExternalCursorView is created in code only")
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        arrow.frame = bounds
+        arrow.path = arrowPath(in: bounds)
+    }
+
+    private func arrowPath(in rect: CGRect) -> CGPath {
+        let w = rect.width
+        let h = rect.height
+        let path = UIBezierPath()
+        path.move(to: .zero)
+        path.addLine(to: CGPoint(x: 0, y: h * 0.8))
+        path.addLine(to: CGPoint(x: w * 0.22, y: h * 0.62))
+        path.addLine(to: CGPoint(x: w * 0.4, y: h))
+        path.addLine(to: CGPoint(x: w * 0.55, y: h * 0.94))
+        path.addLine(to: CGPoint(x: w * 0.38, y: h * 0.56))
+        path.addLine(to: CGPoint(x: w, y: h * 0.56))
+        path.close()
+        return path.cgPath
     }
 }
 
