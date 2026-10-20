@@ -328,6 +328,10 @@ struct LCAppSettingsView: View {
             }
             
             Section {
+                Toggle(isOn: $model.uiFakeIdiomPad) {
+                    Text("Report iPad to app (experimental)")
+                }
+
                 Toggle(isOn: $model.uiHideLiveContainer) {
                     Text("lc.appSettings.hideLiveContainer".loc)
                 }

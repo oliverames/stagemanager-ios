@@ -599,6 +599,13 @@
     _info[@"LCOrientationLock"] = [NSNumber numberWithInt:(int) orientationLock];
     [self save];
 }
+- (BOOL)fakeIdiomPad {
+    return [((NSNumber*) _info[@"LCFakeIdiomPad"]) boolValue];
+}
+- (void)setFakeIdiomPad:(BOOL)fakeIdiomPad {
+    _info[@"LCFakeIdiomPad"] = @(fakeIdiomPad);
+    [self save];
+}
 
 - (MultitaskSpecified)multitaskSpecified {
     return (LCOrientationLock) [((NSNumber*) _info[@"MultitaskSpecified"]) intValue];

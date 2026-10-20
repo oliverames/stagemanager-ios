@@ -9,6 +9,16 @@ UIInterfaceOrientation LCOrientationLock = UIInterfaceOrientationUnknown;
 NSMutableArray<NSString*>* LCSupportedUrlSchemes = nil;
 BOOL launchURLProcessed = NO;
 
+@interface UIDevice(LCFakeIdiom)
+- (UIUserInterfaceIdiom)hook_userInterfaceIdiom;
+@end
+
+@implementation UIDevice(LCFakeIdiom)
+- (UIUserInterfaceIdiom)hook_userInterfaceIdiom {
+    return UIUserInterfaceIdiomPad;
+}
+@end
+
 __attribute__((constructor))
 static void UIKitGuestHooksInit() {
     if(!NSUserDefaults.lcGuestAppId) return;
@@ -39,6 +49,12 @@ static void UIKitGuestHooksInit() {
             swizzle(UIWindow.class, @selector(setAutorotates:forceUpdateInterfaceOrientation:), @selector(hook_setAutorotates:forceUpdateInterfaceOrientation:));
         }
 
+    }
+
+    // Experimental: report the iPad idiom to this app. Runs after the orientation check above,
+    // which needs the real idiom.
+    if([NSUserDefaults.guestAppInfo[@"LCFakeIdiomPad"] boolValue]) {
+        swizzle(UIDevice.class, @selector(userInterfaceIdiom), @selector(hook_userInterfaceIdiom));
     }
 }
 

@@ -32,6 +32,7 @@ typedef NS_ENUM(NSInteger, MultitaskSpecified){
 @property bool dontLoadTweakLoader;
 @property bool dontInjectTweakLoader;
 @property LCOrientationLock orientationLock;
+@property BOOL fakeIdiomPad;
 @property MultitaskSpecified multitaskSpecified;
 @property bool fixFilePickerNew;
 @property bool fixLocalNotification;

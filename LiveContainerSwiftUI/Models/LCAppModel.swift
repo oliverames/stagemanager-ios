@@ -84,6 +84,11 @@ class LCAppModel: ObservableObject, Hashable {
             appInfo.orientationLock = uiOrientationLock
         }
     }
+    @Published var uiFakeIdiomPad : Bool {
+        didSet {
+            appInfo.fakeIdiomPad = uiFakeIdiomPad
+        }
+    }
     @Published var uiSelectedLanguage : String {
         didSet {
             appInfo.selectedLanguage = uiSelectedLanguage
@@ -178,6 +183,7 @@ class LCAppModel: ObservableObject, Hashable {
         self.uiTweakFolder = appInfo.tweakFolder
         self.uiDoSymlinkInbox = appInfo.doSymlinkInbox
         self.uiOrientationLock = appInfo.orientationLock
+        self.uiFakeIdiomPad = appInfo.fakeIdiomPad
         self.uiIsMultitaskModeSpecificed = appInfo.multitaskSpecified
         self.uiUseLCBundleId = appInfo.doUseLCBundleId
         self.uiFixFilePickerNew = appInfo.fixFilePickerNew
